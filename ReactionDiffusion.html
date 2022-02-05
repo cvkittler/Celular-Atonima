@@ -62,24 +62,24 @@
 
     // helper funtion to calculate the new A value
     float newA(){
-        float oldA = texture2D(state, gl_FragCoord.xy).r;
+        float oldA = texture2D(state, gl_FragCoord.xy).a;
         float oldB = texture2D(state, gl_FragCoord.xy).g;
-        float laplace = getLaplace().r;
-        return oldA + ((DiffusionA * laplace) - (oldA * oldB * oldB) + (feed * (1. - oldA)) );
+        vec4 laplace = getLaplace();
+        return oldA + ((DiffusionA * laplace.a) - (oldA * oldB * oldB) + (feed * (1. - oldA)) );
     }
 
     // helper funtion to calculate the new B value
     float newB(){
-        float oldA = texture2D(state, gl_FragCoord.xy).r;
+        float oldA = texture2D(state, gl_FragCoord.xy).a;
         float oldB = texture2D(state, gl_FragCoord.xy).g;
-        float laplace = getLaplace().g;
-        return oldB + ((DiffusionB * laplace) + (oldA * oldB * oldB) - ((kill + feed) * oldB) );
+        vec4 laplace = getLaplace();
+        return oldB + ((DiffusionB * laplace.g) + (oldA * oldB * oldB) - ((kill + feed) * oldB) );
     }
 
     void main() {
-        float newA = newA();
-        float newB = newB();
-        gl_FragColor = vec4(newA, newB, 0.0, 1.);
+        float a = newA();
+        float b = newB();
+        gl_FragColor = vec4(b, b, b, a);
     }
   </script>
 
@@ -94,7 +94,7 @@
 
     void main() {
         vec3 texture = texture2D( uSampler, gl_FragCoord.xy / resolution ).rgb;
-        gl_FragColor = vec4( texture.r, texture.g, texture.b, 1.0 );
+        gl_FragColor = vec4( texture, 1.0 );
     }
   </script>
 
@@ -228,7 +228,7 @@
             x, y, 1, 1,
             gl.RGBA, gl.UNSIGNED_BYTE,
             // is supposed to be a typed array
-            new Uint8Array([valueA,valueA,valueA,valueB])
+            new Uint8Array([valueB,valueB,valueB,valueA])
         )
     }
 
@@ -237,24 +237,17 @@
 
         for(let i = 0; i < dimensions.width; i++ ) {
             for(let j = 0; j < dimensions.height; j++ ) {
-                    poke( i, j, 0, 255, textureBack )
+                    poke( i, j, 255, 0, textureBack )
             }
         }
 
-        // for( i = 0; i < dimensions.width; i++ ) {
-        //         for( j = 0; j < dimensions.height; j++ ) {
-        //             centerI = i - width/2
-        //             centerJ = j - height/2
-        //             if(Math.sqrt(centerI*centerI + centerJ*centerJ) < radius) {
-        //                 poke( i, j, 255, 0, textureBack )
-        //             }
-        //     }
-        // }
-        for(let i = 0; i < dimensions.width; i++ ) {
-            for (let j = 0; j < dimensions.height; j++) {
-                if (j > 600 && Math.random() < 0.005) {
-                    poke(i, j, 255,0 , textureBack)
-                }
+        for( i = 0; i < dimensions.width; i++ ) {
+                for( j = 0; j < dimensions.height; j++ ) {
+                    centerI = i - width/2
+                    centerJ = j - height/2
+                    if(Math.sqrt(centerI*centerI + centerJ*centerJ) < radius) {
+                        poke( i, j, 0, 255, textureBack )
+                    }
             }
         }
     }
