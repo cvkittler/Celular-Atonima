@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang='en'>
+  <head>
+    <style>body{ margin:0; background:black; }</style>
+    <script src="https://cdn.jsdelivr.net/npm/tweakpane@3.0.7/dist/tweakpane.min.js"></script>
+  </head>
+  <body>
+    <canvas id='gl'></canvas>
+  </body>
+  <!-- vertex shader, as simple as possible -->
+  <script id='vertex' type='x-shader/x-vertex'>
+    attribute vec2 a_position;
+
+    void main() {
+      gl_Position = vec4( a_position, 0, 1 );
+    }
+  </script>
+  
+  <!-- game of life simulation fragment shader -->
+  <script id='simulation' type='x-shader/x-fragment'>
+    #ifdef GL_ES
+    precision mediump float;
+    #endif
+
+    uniform float time;
+    uniform vec2 resolution;
+
+    //color input
+    uniform float colorR;
+    uniform float colorG;
+    uniform float colorB;
+
+    //simulation values input
+    uniform float DiffusionA;
+    uniform float DiffusionB;
+    uniform float feed;
+    uniform float kill;
+
+    // simulation texture state, swapped each frame
+    uniform sampler2D state;
+
+    // A is equal to r, g, or b value
+    // B is equal to the a value
+    
+    // look up individual cell values
+    vec4 get(int x, int y) {
+        return texture2D( state, ( gl_FragCoord.xy + vec2(x, y) ) / resolution );
+    }
+    vec4 getLaplace(int x, int y){
+        return  get(0, 0) * -1.0 +
+                get(-1,  0) * 0.2 +
+                get( 1,  0) * 0.2 +
+                get( 0, -1) * 0.2 +
+                get( 0,  1) * 0.2 +
+                get(-1, -1) * 0.05 +
+                get(-1,  1) * 0.05 +
+                get( 1, -1) * 0.05 +
+                get( 1,  1) * 0.05;
+    }
+
+    // helper funtion to calculate the new A value
+    float newA(int x, int y){
+        float oldA = texture2D(state,x,y ).r;
+        float oldB = texture2D(state,x,y ).a;
+        vec3 laplace = getLaplace(x,y).r;
+        return oldA + ((DiffusionA * laplace) - (oldA * oldB * oldB) + (feed * (1 - oldA)));
+    }
+
+    // helper funtion to calculate the new B value
+    float newB(int x, int y){
+        float oldA = texture2D(state,x,y ).r;
+        float oldB = texture2D(state,x,y ).a;
+        vec3 laplace = getLaplace(x,y).a;
+        return oldB + ((DiffusionB * laplace) + (oldA * oldB * oldB) - ((kill + feed) * oldB) );
+    }
+
+    void main() {
+        float newA = newA(gl_FragCoord.x, gl_FragCoord.y);
+        float newB = newB(gl_FragCoord.x, gl_FragCoord.y);
+        gl_FragColor = vec4(newA, newA, newA, newB);
+    }
+  </script>
+
+  <!-- render to screen shader -->
+  <script id='render' type='x-shader/x-fragment'>
+    #ifdef GL_ES
+    precision mediump float;
+    #endif
+
+    uniform sampler2D uSampler;
+    uniform vec2 resolution;
+
+    void main() {
+      gl_FragColor = vec4( texture2D( uSampler, gl_FragCoord.xy / resolution ).rgb, 1. );
+    }
+  </script>
+
+  <script type='text/javascript'>
+    let gl, framebuffer,
+        simulationProgram, drawProgram,
+        uTime, uSimulationState,
+        textureBack, textureFront,
+        dimensions = { width:null, height:null }
+
+    window.onload = function() {
+      const canvas = document.getElementById( 'gl' )
+      gl = canvas.getContext( 'webgl' )
+      canvas.width = dimensions.width = window.innerWidth
+      canvas.height = dimensions.height = window.innerHeight
+      
+      // define drawing area of webgl canvas. bottom corner, width / height
+      // XXX can't remember why we need the *2!
+      gl.viewport( 0,0, gl.drawingBufferWidth, gl.drawingBufferHeight )
+      
+      makeBuffer()
+      makeShaders()
+      makeTextures()
+      setInitialState(100)
+
+      gl.useProgram(simulationProgram);
+
+
+      // textures loaded, now ready to render
+        const pane = new Tweakpane.Pane();
+
+        const paneTabs = pane.addTab({
+            pages: [
+                {title: 'Color'},
+                {title: 'Constants'},
+                {title: 'Start'}
+            ],
+        });
+
+        const ColorParams = {
+            R: 1.0,
+            G: 1.0,
+            B: 1.0
+        };
+        
+        // make a reset button
+        const btn = pane.addButton({
+            title: 'May be Laggy',
+            label: 'Reset Simulation',   // optional
+        });
+
+        // set the sliders
+        const colorR =  paneTabs.pages[0].addInput(ColorParams, 'R', {min:0.0, max:1.0});
+        const colorG =  paneTabs.pages[0].addInput(ColorParams, 'G', {min:0.0, max:1.0});
+        const colorB =  paneTabs.pages[0].addInput(ColorParams, 'B', {min:0.0, max:1.0});
+
+        //Colors
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorR"), 1.0);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorG"), 1.0);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorB"), 1.0);
+
+        // colors update functions
+        colorR.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorR"), ev.value);
+        })
+        colorG.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorG"), ev.value);
+        })
+        colorB.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorB"), ev.value);
+        })
+        
+        // paramiters for the reaction diffusion simulation
+        const ConstantsParams = {
+            DiffusionA: 1.0,
+            DiffusionB: 1.0,
+            feed: 1.0,
+            kill: 1.0,
+        };
+
+        const DiffusionA =  paneTabs.pages[1].addInput(ConstantsParams, 'DiffusionA', {min:0.0, max:1.0});
+        const DiffusionB =  paneTabs.pages[1].addInput(ConstantsParams, 'DiffusionB', {min:0.0, max:1.0});
+        const feed =  paneTabs.pages[1].addInput(ConstantsParams, 'feed', {min:0.0, max:1.0});
+        const kill =  paneTabs.pages[1].addInput(ConstantsParams, 'kill', {min:0.0, max:1.0});
+
+        // reaction diffusion paramiters update functions
+        DiffusionA.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "DiffusionA"), ev.value);
+        })
+        DiffusionB.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "DiffusionB"), ev.value);
+        })
+        feed.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "feed"), ev.value);
+        })
+        kill.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "kill"), ev.value);
+        })
+
+        // paramiters for the initial state of the simulation
+        const StartingParams = {
+            Radius: 100
+        };
+
+        const Radius =  paneTabs.pages[2].addInput(StartingParams, 'Radius', {min:0, max:1000, step:1});
+
+        // reaction diffusion paramiters update functions
+        colorR.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorR"), ev.value);
+        })
+
+        
+
+        btn.on('click', () => {
+            setInitialState(StartingParams.Radius)
+        });
+      render()
+    }
+    
+    function poke( x, y, value, texture ) {   
+        gl.bindTexture( gl.TEXTURE_2D, texture )
+        
+        // https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/texSubImage2D
+        gl.texSubImage2D( 
+            gl.TEXTURE_2D, 0, 
+            // x offset, y offset, width, height
+            x, y, 1, 1,
+            gl.RGBA, gl.UNSIGNED_BYTE,
+            // is supposed to be a typed array
+            new Uint8Array([ value, value, value, 255 ])
+        )
+    }
+
+    function setInitialState(radius) {
+        let width = dimensions.width, height = dimensions.height
+        for( i = 0; i < dimensions.width; i++ ) {
+                for( j = 0; j < dimensions.height; j++ ) {
+                    centerI = i - width/2
+                    centerJ = j - height/2
+                    if(Math.sqrt(centerI*centerI + centerJ*centerJ) < radius) {
+                        poke( i, j, 255, textureBack )
+                    }else{
+                        poke( i, j, 1, textureBack )
+                    }
+            }
+        }
+    }
+
+    function makeBuffer() {
+      // create a buffer object to store vertices
+      const buffer = gl.createBuffer()
+
+      // point buffer at graphic context's ARRAY_BUFFER
+      gl.bindBuffer( gl.ARRAY_BUFFER, buffer )
+
+      const triangles = new Float32Array([
+        -1, -1,
+         1, -1,
+        -1,  1,
+        -1,  1,
+         1, -1,
+         1,  1
+      ])
+
+      // initialize memory for buffer and populate it. Give
+      // open gl hint contents will not change dynamically.
+      gl.bufferData( gl.ARRAY_BUFFER, triangles, gl.STATIC_DRAW )
+    }
+    
+    function makeShaders() {
+      // create vertex shader
+      let shaderScript = document.getElementById('vertex')
+      let shaderSource = shaderScript.text
+      const vertexShader = gl.createShader( gl.VERTEX_SHADER )
+      gl.shaderSource( vertexShader, shaderSource )
+      gl.compileShader( vertexShader )
+
+      // create fragment shader
+      shaderScript = document.getElementById('render')
+      shaderSource = shaderScript.text
+      const drawFragmentShader = gl.createShader( gl.FRAGMENT_SHADER )
+      gl.shaderSource( drawFragmentShader, shaderSource )
+      gl.compileShader( drawFragmentShader )
+      console.log( gl.getShaderInfoLog(drawFragmentShader) )
+      
+      // create render program that draws to screen
+      drawProgram = gl.createProgram()
+      gl.attachShader( drawProgram, vertexShader )
+      gl.attachShader( drawProgram, drawFragmentShader )
+
+      gl.linkProgram( drawProgram )
+      gl.useProgram( drawProgram )
+      
+      uRes = gl.getUniformLocation( drawProgram, 'resolution' )
+      gl.uniform2f( uRes, gl.drawingBufferWidth, gl.drawingBufferHeight )
+
+      // get position attribute location in shader
+      let position = gl.getAttribLocation( drawProgram, 'a_position' )
+      // enable the attribute
+      gl.enableVertexAttribArray( position )
+      // this will point to the vertices in the last bound array buffer.
+      // In this example, we only use one array buffer, where we're storing 
+      // our vertices
+      gl.vertexAttribPointer( position, 2, gl.FLOAT, false, 0,0 )
+      
+      shaderScript = document.getElementById('simulation')
+      shaderSource = shaderScript.text
+      const simulationFragmentShader = gl.createShader( gl.FRAGMENT_SHADER )
+      gl.shaderSource( simulationFragmentShader, shaderSource )
+      gl.compileShader( simulationFragmentShader )
+      console.log( gl.getShaderInfoLog( simulationFragmentShader ) )
+      
+      // create simulation program
+      simulationProgram = gl.createProgram()
+      gl.attachShader( simulationProgram, vertexShader )
+      gl.attachShader( simulationProgram, simulationFragmentShader )
+
+      gl.linkProgram( simulationProgram )
+      gl.useProgram( simulationProgram )
+      
+      uRes = gl.getUniformLocation( simulationProgram, 'resolution' )
+      gl.uniform2f( uRes, gl.drawingBufferWidth, gl.drawingBufferHeight )
+      
+      // find a pointer to the uniform "time" in our fragment shader
+      uTime = gl.getUniformLocation( simulationProgram, 'time' )
+      
+      //uSimulationState = gl.getUniformLocation( simulationProgram, 'state' )
+
+      position = gl.getAttribLocation( simulationProgram, 'a_position' )
+      gl.enableVertexAttribArray( simulationProgram )
+      gl.vertexAttribPointer( position, 2, gl.FLOAT, false, 0,0 )
+    }
+    
+    function makeTextures() {
+      textureBack = gl.createTexture()
+      gl.bindTexture( gl.TEXTURE_2D, textureBack )
+      
+      // these two lines are needed for non-power-of-2 textures
+      gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE )
+      gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE )
+      
+      // how to map when texture element is less than one pixel
+      // use gl.NEAREST to avoid linear interpolation
+      gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST )
+      // how to map when texture element is more than one pixel
+      gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+      
+      // specify texture format, see https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/texImage2D
+      gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, dimensions.width, dimensions.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null )
+  
+      textureFront = gl.createTexture()
+      gl.bindTexture( gl.TEXTURE_2D, textureFront )
+      gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE )
+      gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE )
+      gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST )
+      gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST )
+      gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, dimensions.width, dimensions.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null )
+
+      // Create a framebuffer and attach the texture.
+      framebuffer = gl.createFramebuffer()
+    }
+
+    // keep track of time via incremental frame counter
+    let time = 0
+    function render() {
+      // schedules render to be called the next time the video card requests 
+      // a frame of video
+      window.requestAnimationFrame( render )
+      
+      // use our simulation shader
+      gl.useProgram( simulationProgram )  
+      // update time on CPU and GPU
+      time++
+      gl.uniform1f( uTime, time )     
+      gl.bindFramebuffer( gl.FRAMEBUFFER, framebuffer )
+      // use the framebuffer to write to our texFront texture
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textureFront, 0 )
+      // set viewport to be the size of our state (game of life simulation)
+      // here, this represents the size that will be drawn onto our texture
+      gl.viewport(0, 0, dimensions.width,dimensions.height )
+      
+      // in our shaders, read from texBack, which is where we poked to
+      gl.activeTexture( gl.TEXTURE0 )
+      gl.bindTexture( gl.TEXTURE_2D, textureBack )
+      gl.uniform1i( uSimulationState, 0 )
+      // run shader
+      gl.drawArrays( gl.TRIANGLES, 0, 6 )
+  
+      // swap our front and back textures
+      let tmp = textureFront
+      textureFront = textureBack
+      textureBack = tmp
+
+      // use the default framebuffer object by passing null
+      gl.bindFramebuffer( gl.FRAMEBUFFER, null )
+      // set our viewport to be the size of our canvas
+      // so that it will fill it entirely
+      gl.viewport(0, 0, dimensions.width,dimensions.height )
+      // select the texture we would like to draw to the screen.
+      // note that webgl does not allow you to write to / read from the
+      // same texture in a single render pass. Because of the swap, we're
+      // displaying the state of our simulation ****before**** this render pass (frame)
+      gl.bindTexture( gl.TEXTURE_2D, textureFront )
+      // use our drawing (copy) shader
+      gl.useProgram( drawProgram )
+      // put simulation on screen
+      gl.drawArrays( gl.TRIANGLES, 0, 6 )
+    }
+  </script>
+
+</html>
