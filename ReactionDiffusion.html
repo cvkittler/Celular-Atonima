@@ -46,7 +46,9 @@
     vec4 get(int x, int y) {
         return texture2D( state, ( gl_FragCoord.xy + vec2(x, y) ) / resolution );
     }
-    vec4 getLaplace(int x, int y){
+
+    // get the 3x3 convalution of the current location
+    vec4 getLaplace(){
         return  get(0, 0) * -1.0 +
                 get(-1,  0) * 0.2 +
                 get( 1,  0) * 0.2 +
@@ -59,24 +61,24 @@
     }
 
     // helper funtion to calculate the new A value
-    float newA(int x, int y){
-        float oldA = texture2D(state,x,y ).r;
-        float oldB = texture2D(state,x,y ).a;
-        vec3 laplace = getLaplace(x,y).r;
-        return oldA + ((DiffusionA * laplace) - (oldA * oldB * oldB) + (feed * (1 - oldA)));
+    float newA(){
+        float oldA = texture2D(state, gl_FragCoord.xy).r;
+        float oldB = texture2D(state, gl_FragCoord.xy).a;
+        float laplace = getLaplace().r;
+        return oldA + ((DiffusionA * laplace) - (oldA * oldB * oldB) + (feed * (1. - oldA)) );
     }
 
     // helper funtion to calculate the new B value
-    float newB(int x, int y){
-        float oldA = texture2D(state,x,y ).r;
-        float oldB = texture2D(state,x,y ).a;
-        vec3 laplace = getLaplace(x,y).a;
+    float newB(){
+        float oldA = texture2D(state, gl_FragCoord.xy).r;
+        float oldB = texture2D(state, gl_FragCoord.xy).a;
+        float laplace = getLaplace().a;
         return oldB + ((DiffusionB * laplace) + (oldA * oldB * oldB) - ((kill + feed) * oldB) );
     }
 
     void main() {
-        float newA = newA(gl_FragCoord.x, gl_FragCoord.y);
-        float newB = newB(gl_FragCoord.x, gl_FragCoord.y);
+        float newA = newA();
+        float newB = newB();
         gl_FragColor = vec4(newA, newA, newA, newB);
     }
   </script>
@@ -170,15 +172,15 @@
         // paramiters for the reaction diffusion simulation
         const ConstantsParams = {
             DiffusionA: 1.0,
-            DiffusionB: 1.0,
-            feed: 1.0,
-            kill: 1.0,
+            DiffusionB: 0.5,
+            feed: 0.055,
+            kill: 0.062,
         };
 
         const DiffusionA =  paneTabs.pages[1].addInput(ConstantsParams, 'DiffusionA', {min:0.0, max:1.0});
         const DiffusionB =  paneTabs.pages[1].addInput(ConstantsParams, 'DiffusionB', {min:0.0, max:1.0});
-        const feed =  paneTabs.pages[1].addInput(ConstantsParams, 'feed', {min:0.0, max:1.0});
-        const kill =  paneTabs.pages[1].addInput(ConstantsParams, 'kill', {min:0.0, max:1.0});
+        const feed =  paneTabs.pages[1].addInput(ConstantsParams, 'feed', {min:0.0, max:.10});
+        const kill =  paneTabs.pages[1].addInput(ConstantsParams, 'kill', {min:0.0, max:.10});
 
         // reaction diffusion paramiters update functions
         DiffusionA.on("change", (ev)=>{
@@ -219,7 +221,7 @@
       render()
     }
     
-    function poke( x, y, value, texture ) {   
+    function poke( x, y, valueA, valueB, texture ) {   
         gl.bindTexture( gl.TEXTURE_2D, texture )
         
         // https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/texSubImage2D
@@ -229,20 +231,26 @@
             x, y, 1, 1,
             gl.RGBA, gl.UNSIGNED_BYTE,
             // is supposed to be a typed array
-            new Uint8Array([ value, value, value, 255 ])
+            new Uint8Array([valueA,valueA,valueA,valueB])
         )
     }
 
     function setInitialState(radius) {
         let width = dimensions.width, height = dimensions.height
+
+        // Seed canvas
+        for(let i = 0; i < dimensions.width; i++ ) {
+            for(let j = 0; j < dimensions.height; j++ ) {
+                    poke( i, j, 0, 255, textureBack )
+            }
+        }
+
         for( i = 0; i < dimensions.width; i++ ) {
                 for( j = 0; j < dimensions.height; j++ ) {
                     centerI = i - width/2
                     centerJ = j - height/2
                     if(Math.sqrt(centerI*centerI + centerJ*centerJ) < radius) {
-                        poke( i, j, 255, textureBack )
-                    }else{
-                        poke( i, j, 1, textureBack )
+                        poke( i, j, 255, 0, textureBack )
                     }
             }
         }
