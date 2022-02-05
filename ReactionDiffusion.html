@@ -44,26 +44,26 @@
     
     // look up individual cell values
     vec4 get(int x, int y) {
-        return texture2D( state, ( gl_FragCoord.xy + vec2(x, y) ) / resolution );
+        return texture2D( state, ( gl_FragCoord.xy + vec2(x, y) ) / resolution ).rgba;
     }
 
     // get the 3x3 convalution of the current location
     vec4 getLaplace(){
-        return  get(0, 0) * -1.0 +
-                get(-1,  0) * 0.2 +
-                get( 1,  0) * 0.2 +
-                get( 0, -1) * 0.2 +
-                get( 0,  1) * 0.2 +
-                get(-1, -1) * 0.05 +
-                get(-1,  1) * 0.05 +
-                get( 1, -1) * 0.05 +
-                get( 1,  1) * 0.05;
+        return  get(0, 0).rgba * -1.0 +
+                get(-1,  0).rgba * 0.2 +
+                get( 1,  0).rgba * 0.2 +
+                get( 0, -1).rgba * 0.2 +
+                get( 0,  1).rgba * 0.2 +
+                get(-1, -1).rgba * 0.05 +
+                get(-1,  1).rgba * 0.05 +
+                get( 1, -1).rgba * 0.05 +
+                get( 1,  1).rgba * 0.05;
     }
 
     // helper funtion to calculate the new A value
     float newA(){
         float oldA = texture2D(state, gl_FragCoord.xy).r;
-        float oldB = texture2D(state, gl_FragCoord.xy).a;
+        float oldB = texture2D(state, gl_FragCoord.xy).g;
         float laplace = getLaplace().r;
         return oldA + ((DiffusionA * laplace) - (oldA * oldB * oldB) + (feed * (1. - oldA)) );
     }
@@ -71,15 +71,15 @@
     // helper funtion to calculate the new B value
     float newB(){
         float oldA = texture2D(state, gl_FragCoord.xy).r;
-        float oldB = texture2D(state, gl_FragCoord.xy).a;
-        float laplace = getLaplace().a;
+        float oldB = texture2D(state, gl_FragCoord.xy).g;
+        float laplace = getLaplace().g;
         return oldB + ((DiffusionB * laplace) + (oldA * oldB * oldB) - ((kill + feed) * oldB) );
     }
 
     void main() {
         float newA = newA();
         float newB = newB();
-        gl_FragColor = vec4(newA, newA, newA, newB);
+        gl_FragColor = vec4(newA, newB, 0.0, 1.);
     }
   </script>
 
@@ -93,7 +93,8 @@
     uniform vec2 resolution;
 
     void main() {
-      gl_FragColor = vec4( texture2D( uSampler, gl_FragCoord.xy / resolution ).rgb, 1. );
+        vec3 texture = texture2D( uSampler, gl_FragCoord.xy / resolution ).rgb;
+        gl_FragColor = vec4( texture.r, texture.g, texture.b, 1.0 );
     }
   </script>
 
@@ -120,7 +121,6 @@
       setInitialState(100)
 
       gl.useProgram(simulationProgram);
-
 
       // textures loaded, now ready to render
         const pane = new Tweakpane.Pane();
@@ -213,12 +213,9 @@
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorR"), ev.value);
         })
 
-        
-
         btn.on('click', () => {
             setInitialState(StartingParams.Radius)
         });
-      render()
     }
     
     function poke( x, y, valueA, valueB, texture ) {   
@@ -238,20 +235,26 @@
     function setInitialState(radius) {
         let width = dimensions.width, height = dimensions.height
 
-        // Seed canvas
         for(let i = 0; i < dimensions.width; i++ ) {
             for(let j = 0; j < dimensions.height; j++ ) {
                     poke( i, j, 0, 255, textureBack )
             }
         }
 
-        for( i = 0; i < dimensions.width; i++ ) {
-                for( j = 0; j < dimensions.height; j++ ) {
-                    centerI = i - width/2
-                    centerJ = j - height/2
-                    if(Math.sqrt(centerI*centerI + centerJ*centerJ) < radius) {
-                        poke( i, j, 255, 0, textureBack )
-                    }
+        // for( i = 0; i < dimensions.width; i++ ) {
+        //         for( j = 0; j < dimensions.height; j++ ) {
+        //             centerI = i - width/2
+        //             centerJ = j - height/2
+        //             if(Math.sqrt(centerI*centerI + centerJ*centerJ) < radius) {
+        //                 poke( i, j, 255, 0, textureBack )
+        //             }
+        //     }
+        // }
+        for(let i = 0; i < dimensions.width; i++ ) {
+            for (let j = 0; j < dimensions.height; j++) {
+                if (j > 600 && Math.random() < 0.005) {
+                    poke(i, j, 255,0 , textureBack)
+                }
             }
         }
     }
@@ -368,6 +371,8 @@
 
       // Create a framebuffer and attach the texture.
       framebuffer = gl.createFramebuffer()
+      
+      render()
     }
 
     // keep track of time via incremental frame counter
