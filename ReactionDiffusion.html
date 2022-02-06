@@ -21,65 +21,78 @@
     #ifdef GL_ES
     precision mediump float;
     #endif
-
+    
     uniform float time;
     uniform vec2 resolution;
-
-    //color input
-    uniform float colorR;
-    uniform float colorG;
-    uniform float colorB;
-
-    //simulation values input
     uniform float DiffusionA;
     uniform float DiffusionB;
-    uniform float feed;
     uniform float kill;
-
+    uniform float feed ;
+    uniform float XPixelPerPeriod ;
+    uniform float XfeedWeight ;
+    uniform float topKillValue ;
+    uniform float bottomKillValue ;
+    uniform bool toggleKillGradiant;
+    
     // simulation texture state, swapped each frame
     uniform sampler2D state;
 
-    // A is equal to r, g, or b value
-    // B is equal to the a value
+    vec2 get(int x, int y) {
+        return vec2( 
+          texture2D( state, ( gl_FragCoord.xy + vec2(x, y) ) / resolution ).ra
+        );
+      }
+
+    vec2 laPlace() {
+        vec2 diagonals = .05 * (get(-1, -1).xy +
+        get(1, 1).xy +
+        get(1, -1).xy +
+        get(-1, 1).xy);
+  
+        vec2 adjacents = .2 * (get(0, -1).xy +
+        get(1, 0).xy +
+        get(-1, 0).xy +
+        get(0, 1)).xy;
+  
+        return (diagonals + adjacents - get(0, 0).xy);
+    }
     
-    // look up individual cell values
-    vec4 get(int x, int y) {
-        return texture2D( state, ( gl_FragCoord.xy + vec2(x, y) ) / resolution ).rgba;
-    }
+    void main() 
+        {//simulation costants but not in the global scope
+        vec2 res = resolution;
+        float t = 1.0;
+        float dA = DiffusionA;
+        float dB = DiffusionB;
+        float _f = feed ;
+        float _k = kill;
+        float XpixPerPeriod = XPixelPerPeriod;
+        float XfeedWeight = XfeedWeight;
 
-    // get the 3x3 convalution of the current location
-    vec4 getLaplace(){
-        return  get(0, 0).rgba * -1.0 +
-                get(-1,  0).rgba * 0.2 +
-                get( 1,  0).rgba * 0.2 +
-                get( 0, -1).rgba * 0.2 +
-                get( 0,  1).rgba * 0.2 +
-                get(-1, -1).rgba * 0.05 +
-                get(-1,  1).rgba * 0.05 +
-                get( 1, -1).rgba * 0.05 +
-                get( 1,  1).rgba * 0.05;
-    }
+        //wrong name but dont want to change it
+        float top_k = topKillValue;
+        float bottom_k = bottomKillValue; //0,0 is bottom left
+        bool killGradiant = toggleKillGradiant;
+        
+        _f = (cos((gl_FragCoord.x - gl_FragCoord.x/2.) / (XpixPerPeriod * 6.28)) * XfeedWeight) ;
+        float f = clamp(_f, 0.0, 1.0);
 
-    // helper funtion to calculate the new A value
-    float newA(){
-        float oldA = texture2D(state, gl_FragCoord.xy).a;
-        float oldB = texture2D(state, gl_FragCoord.xy).g;
-        vec4 laplace = getLaplace();
-        return oldA + ((DiffusionA * laplace.a) - (oldA * oldB * oldB) + (feed * (1. - oldA)) );
-    }
+        if(killGradiant){
+            _k = mix(bottom_k, top_k, (gl_FragCoord.y / res.y));
+        }
+        float k = clamp(_k, 0.0, 1.0);
+        
 
-    // helper funtion to calculate the new B value
-    float newB(){
-        float oldA = texture2D(state, gl_FragCoord.xy).a;
-        float oldB = texture2D(state, gl_FragCoord.xy).g;
-        vec4 laplace = getLaplace();
-        return oldB + ((DiffusionB * laplace.g) + (oldA * oldB * oldB) - ((kill + feed) * oldB) );
-    }
+        vec2 lpVal = laPlace();
+        vec2 OG_val = get(0,0);
+        float a = OG_val.y;
+        float b = OG_val.x;
+        float newA = a + t * ((dA * lpVal.y) - (a * b * b) + (f * (1.0 - a)));
+        float newB = b + t * ((dB * lpVal.x) + a * b * b - (k + f) * b);
 
-    void main() {
-        float a = newA();
-        float b = newB();
-        gl_FragColor = vec4(b, b, b, a);
+        float resA = clamp(newA, 0.0, 1.0);
+        float resB = clamp(newB, 0.0, 1.0);
+
+        gl_FragColor = vec4( resB, resB, resB, resA );
     }
   </script>
 
@@ -93,8 +106,7 @@
     uniform vec2 resolution;
 
     void main() {
-        vec3 texture = texture2D( uSampler, gl_FragCoord.xy / resolution ).rgb;
-        gl_FragColor = vec4( texture, 1.0 );
+      gl_FragColor = vec4( texture2D( uSampler, gl_FragCoord.xy / resolution).rgb, 1. );
     }
   </script>
 
@@ -118,105 +130,148 @@
       makeBuffer()
       makeShaders()
       makeTextures()
-      setInitialState(100)
 
       gl.useProgram(simulationProgram);
 
       // textures loaded, now ready to render
         const pane = new Tweakpane.Pane();
-
         const paneTabs = pane.addTab({
             pages: [
-                {title: 'Color'},
-                {title: 'Constants'},
-                {title: 'Start'}
+                {title: 'Const'},
+                {title: 'Start'},
+                {title: 'Fun'}
             ],
         });
-
-        const ColorParams = {
-            R: 1.0,
-            G: 1.0,
-            B: 1.0
-        };
         
-        // make a reset button
-        const btn = pane.addButton({
-            title: 'May be Laggy',
-            label: 'Reset Simulation',   // optional
-        });
 
-        // set the sliders
-        const colorR =  paneTabs.pages[0].addInput(ColorParams, 'R', {min:0.0, max:1.0});
-        const colorG =  paneTabs.pages[0].addInput(ColorParams, 'G', {min:0.0, max:1.0});
-        const colorB =  paneTabs.pages[0].addInput(ColorParams, 'B', {min:0.0, max:1.0});
-
-        //Colors
-        gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorR"), 1.0);
-        gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorG"), 1.0);
-        gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorB"), 1.0);
-
-        // colors update functions
-        colorR.on("change", (ev)=>{
-            gl.useProgram(simulationProgram);
-            gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorR"), ev.value);
-        })
-        colorG.on("change", (ev)=>{
-            gl.useProgram(simulationProgram);
-            gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorG"), ev.value);
-        })
-        colorB.on("change", (ev)=>{
-            gl.useProgram(simulationProgram);
-            gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorB"), ev.value);
-        })
-        
         // paramiters for the reaction diffusion simulation
         const ConstantsParams = {
-            DiffusionA: 1.0,
-            DiffusionB: 0.5,
-            feed: 0.055,
+            DiffusionA: 0.99,
+            DiffusionB: 0.28,
+            feed: 0.075,
             kill: 0.062,
         };
 
-        const DiffusionA =  paneTabs.pages[1].addInput(ConstantsParams, 'DiffusionA', {min:0.0, max:1.0});
-        const DiffusionB =  paneTabs.pages[1].addInput(ConstantsParams, 'DiffusionB', {min:0.0, max:1.0});
-        const feed =  paneTabs.pages[1].addInput(ConstantsParams, 'feed', {min:0.0, max:.10});
-        const kill =  paneTabs.pages[1].addInput(ConstantsParams, 'kill', {min:0.0, max:.10});
+        const DiffusionA =  paneTabs.pages[0].addInput(ConstantsParams, 'DiffusionA', { label: 'Diffusion A',min:0.0, max:1.0});
+        const DiffusionB =  paneTabs.pages[0].addInput(ConstantsParams, 'DiffusionB', { label: 'Diffusion B',min:0.0, max:1.0});
+        const feed =  paneTabs.pages[0].addInput(ConstantsParams, 'feed', { label: 'Feed',min:0.0, max:.10});
+        const kill =  paneTabs.pages[0].addInput(ConstantsParams, 'kill', { label: 'Kill',min:0.0, max:.10});
+
+        gl.useProgram(simulationProgram);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "DiffusionA"), ConstantsParams.DiffusionA);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "DiffusionB"), ConstantsParams.DiffusionB);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "feed"), ConstantsParams.feed);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "kill"), ConstantsParams.kill);
 
         // reaction diffusion paramiters update functions
         DiffusionA.on("change", (ev)=>{
             gl.useProgram(simulationProgram);
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "DiffusionA"), ev.value);
+            console.log("DiffusionA:", ev.value);
         })
         DiffusionB.on("change", (ev)=>{
             gl.useProgram(simulationProgram);
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "DiffusionB"), ev.value);
+            console.log("DiffusionB:", ev.value);
         })
         feed.on("change", (ev)=>{
             gl.useProgram(simulationProgram);
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "feed"), ev.value);
+            console.log("feed:", ev.value);
         })
         kill.on("change", (ev)=>{
             gl.useProgram(simulationProgram);
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "kill"), ev.value);
+            console.log("kill:", ev.value);
         })
 
-        // paramiters for the initial state of the simulation
+        // paramiters for the initial seeding state of the simulation
         const StartingParams = {
-            Radius: 100
+            RadiusOrWidth: 100,
+            startingState: 2
         };
 
-        const Radius =  paneTabs.pages[2].addInput(StartingParams, 'Radius', {min:0, max:1000, step:1});
+        const Radius =  paneTabs.pages[1].addInput(StartingParams, 'RadiusOrWidth', {min:0, max:1000, step:1, label: 'Radius or Width',});
+        const StartStateList =  paneTabs.pages[1].addInput(StartingParams, 'startingState', {options: {Circle: 0, BarVirtical: 1, BarHorizontal: 2,}, label: 'Starting State',});
 
-        // reaction diffusion paramiters update functions
-        colorR.on("change", (ev)=>{
-            gl.useProgram(simulationProgram);
-            gl.uniform1f(gl.getUniformLocation(simulationProgram, "colorR"), ev.value);
-        })
+        // make a reset button
+        const btn = pane.addButton({
+            title: 'Restart WARN: Laggy'
+        });
 
         btn.on('click', () => {
-            setInitialState(StartingParams.Radius)
+            setInitialState(StartingParams.RadiusOrWidth, StartingParams.startingState)
         });
-    }
+
+        //X controls
+        // paramiters for the X controls feed distortion
+
+        const XParams = {
+            XPixPerPeriod: 10,
+            XfeedChangeWeight: 0.1
+        };
+
+        const folderX = paneTabs.pages[2].addFolder({
+            title: 'X Effexts',
+        });
+        const PixelPerPeriodX =  folderX.addInput(XParams, 'XPixPerPeriod', {label: 'Pixel per X Period', min:1.0, max:50., step:1.0});
+        const feedWeightX =  folderX.addInput(XParams, 'XfeedChangeWeight', {label: 'Feed Distortion Weight', min:0.0, max:1.});
+
+        // initilize the uniforms
+        gl.useProgram(simulationProgram);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "XPixelPerPeriod"), XParams.XPixPerPeriod);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "XfeedWeight"), XParams.XfeedChangeWeight);
+
+        PixelPerPeriodX.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "XPixelPerPeriod"), ev.value);
+            console.log("PixelPerPeriod:", ev.value);
+        })
+        feedWeightX.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "XfeedWeight"), ev.value);
+            console.log("feedWeight:", ev.value);
+        })
+
+        const killGradiuantParms = {
+            Enabled: false,
+            topKillValue: 0.062,
+            bottomKillValue: 0.062
+        };
+
+        const folderKillGradiant = paneTabs.pages[2].addFolder({
+            title: 'Kill Gradiant',
+        });
+
+        const toggleKillGradiant = folderKillGradiant.addInput(killGradiuantParms, 'Enabled');
+        const topKillValue =  folderKillGradiant.addInput(killGradiuantParms, 'topKillValue', {label: 'Top Value', min:0.0, max:1.0});
+        const bottomKillValue =  folderKillGradiant.addInput(killGradiuantParms, 'bottomKillValue', {label: 'Bottom Value', min:0.0, max:1.0});
+
+        // initilize the uniforms
+        gl.useProgram(simulationProgram);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "toggleKillGradiant"), killGradiuantParms.Enabled);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "topKillValue"), killGradiuantParms.topKillValue);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "bottomKillValue"), killGradiuantParms.bottomKillValue);
+
+        //uniform updating functions
+        toggleKillGradiant.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "toggleKillGradiant"), ev.value);
+            console.log("toggleKillGradiant:", ev.value);
+        })
+        topKillValue.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "topKillValue"), ev.value);
+            console.log("topKillValue:", ev.value);
+        })
+        bottomKillValue.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "bottomKillValue"), ev.value);
+            console.log("bottomKillValue:", ev.value);
+        })
+        setInitialState(StartingParams.RadiusOrWidth, StartingParams.startingState)
+        render()
+    }//on load end
     
     function poke( x, y, valueA, valueB, texture ) {   
         gl.bindTexture( gl.TEXTURE_2D, texture )
@@ -232,24 +287,53 @@
         )
     }
 
-    function setInitialState(radius) {
+    function setInitialState(radius, state) {
         let width = dimensions.width, height = dimensions.height
-
-        for(let i = 0; i < dimensions.width; i++ ) {
-            for(let j = 0; j < dimensions.height; j++ ) {
-                    poke( i, j, 255, 0, textureBack )
-            }
-        }
-
-        for( i = 0; i < dimensions.width; i++ ) {
-                for( j = 0; j < dimensions.height; j++ ) {
-                    centerI = i - width/2
-                    centerJ = j - height/2
-                    if(Math.sqrt(centerI*centerI + centerJ*centerJ) < radius) {
-                        poke( i, j, 0, 255, textureBack )
+        
+        console.log("STARTING:Setting Intital State")
+        console.log("Start State: ", state)
+        switch(state){
+            case 0://circle
+                for( i = 0; i < dimensions.width; i++ ) {
+                        for( j = 0; j < dimensions.height; j++ ) {
+                            centerI = i - width/2
+                            centerJ = j - height/2
+                            if(Math.sqrt(centerI*centerI + centerJ*centerJ) < radius) {
+                                poke( i, j, 255, 255, textureBack )
+                            }else{
+                                poke( i, j, 255, 0, textureBack )
+                            }
                     }
-            }
+                }
+            break;
+            case 1:
+                for( i = 0; i < dimensions.width; i++ ) {
+                        for( j = 0; j < dimensions.height; j++ ) {
+                            centerI = i - width/2
+                            centerJ = j - height/2
+                            if(Math.abs(centerI) < radius) {
+                                poke( i, j, 255, 255, textureBack )
+                            }else{
+                                poke( i, j, 255, 0, textureBack )
+                            }
+                    }
+                }
+            break;
+            case 2://horizontal bar
+                for( i = 0; i < dimensions.width; i++ ) {
+                        for( j = 0; j < dimensions.height; j++ ) {
+                            centerI = i - width/2
+                            centerJ = j - height/2
+                            if(Math.abs(centerJ) < radius) {
+                                poke( i, j, 255, 255, textureBack )
+                            }else{
+                                poke( i, j, 255, 0, textureBack )
+                            }
+                    }
+                }
+            break;
         }
+        console.log("DONE:Setting Intital State")
     }
 
     function makeBuffer() {
@@ -365,7 +449,6 @@
       // Create a framebuffer and attach the texture.
       framebuffer = gl.createFramebuffer()
       
-      render()
     }
 
     // keep track of time via incremental frame counter
