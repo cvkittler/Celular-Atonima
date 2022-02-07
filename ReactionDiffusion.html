@@ -330,26 +330,29 @@
             "persetValue",
             {
             label: 'Preset', 
-            options:    {default:       0.,
-                        livingPillars:  1., 
-                        ShockedEyes:    2., 
-                        MoldyTrees:     3., 
-                        StopAndStart:   4.,}
+            options:    {Default:               0.,
+                        Living_Pillars:         1., 
+                        Shocked_Eyes:           2., 
+                        Moldy_Trees:            3., 
+                        Stop_And_Start:         4.,
+                        X_Effect_DEMO:          5.,
+                        Kill_Gradient_DEMO:     6.,
+                        Diffusion_vs_Time_DEMO: 7.,}
             }
         );
             
 
         Presets.on('change', (ev) => {
             switch(ev.value){
-                case 0.0:
+                case 0.0: //default
                     // seeding params
                     StartingParams.RadiusOrWidth = 100
-                    StartingParams.startingState = 2
+                    StartingParams.startingState = 0
                     //base params
-                    ConstantsParams.DiffusionA = 0.99
-                    ConstantsParams.DiffusionB = 0.28
-                    ConstantsParams.feed = 0.075
-                    ConstantsParams.kill = 0.062
+                    ConstantsParams.DiffusionA = 0.71
+                    ConstantsParams.DiffusionB = 0.14
+                    ConstantsParams.feed = 0.055
+                    ConstantsParams.kill = 0.066
                     // x feed params
                     XParams.Xenabled = false
                     XParams.XPixPerPeriod = 10
@@ -363,7 +366,7 @@
                     diffusionParams.diffusionState = 0.0
                     diffusionParams.diffusionWeight = 0.1
                 break;
-                case 1.0:
+                case 1.0: //living pillars
                     // seeding params
                     StartingParams.RadiusOrWidth = 100
                     StartingParams.startingState = 2
@@ -385,7 +388,7 @@
                     diffusionParams.diffusionState = 1.0
                     diffusionParams.diffusionWeight = 0.2
                 break;
-                case 2.0:
+                case 2.0: //shocked eyes
                     // seeding params
                     StartingParams.RadiusOrWidth = 100
                     StartingParams.startingState = 2
@@ -407,7 +410,7 @@
                     diffusionParams.diffusionState = 1.0
                     diffusionParams.diffusionWeight = 0.2
                 break;
-                case 3.0:
+                case 3.0: // moldy tree
                     // seeding params
                     StartingParams.RadiusOrWidth = 100
                     StartingParams.startingState = 1
@@ -450,6 +453,72 @@
                     diffusionParams.diffusionPeriod = 20.0
                     diffusionParams.diffusionState = 1.0
                     diffusionParams.diffusionWeight = 0.2
+                break;
+                case 5.0: // x effect demo
+                    // seeding params
+                    StartingParams.RadiusOrWidth = 250
+                    StartingParams.startingState = 0
+                    //base params
+                    ConstantsParams.DiffusionA = 0.71
+                    ConstantsParams.DiffusionB = 0.14
+                    ConstantsParams.feed = 0.055
+                    ConstantsParams.kill = 0.066
+                    // x feed params
+                    XParams.Xenabled = true
+                    XParams.XPixPerPeriod = 10
+                    XParams.XfeedChangeWeight = 0.05
+                    // kill gradiant
+                    killGradiuantParms.Enabled = false
+                    killGradiuantParms.topKillValue = 0.124
+                    killGradiuantParms.bottomKillValue = 0.0
+                    // diffusion
+                    diffusionParams.diffusionPeriod = 100.0
+                    diffusionParams.diffusionState = 0.0
+                    diffusionParams.diffusionWeight = 0.1
+                break;
+                case 6.0: // Kill gradiant demo
+                    // seeding params
+                    StartingParams.RadiusOrWidth = 250
+                    StartingParams.startingState = 0
+                    //base params
+                    ConstantsParams.DiffusionA = 0.71
+                    ConstantsParams.DiffusionB = 0.14
+                    ConstantsParams.feed = 0.04
+                    ConstantsParams.kill = 0.0
+                    // x feed params
+                    XParams.Xenabled = false
+                    XParams.XPixPerPeriod = 10
+                    XParams.XfeedChangeWeight = 0.05
+                    // kill gradiant
+                    killGradiuantParms.Enabled = true
+                    killGradiuantParms.topKillValue = 0.08
+                    killGradiuantParms.bottomKillValue = 0.04
+                    // diffusion
+                    diffusionParams.diffusionPeriod = 100.0
+                    diffusionParams.diffusionState = 0.0
+                    diffusionParams.diffusionWeight = 0.1
+                break;
+                case 7.0: // diffussion B vs time
+                    // seeding params
+                    StartingParams.RadiusOrWidth = 250
+                    StartingParams.startingState = 0
+                    //base params
+                    ConstantsParams.DiffusionA = 0.83
+                    ConstantsParams.DiffusionB = 0.25
+                    ConstantsParams.feed = 0.055
+                    ConstantsParams.kill = 0.066
+                    // x feed params
+                    XParams.Xenabled = false
+                    XParams.XPixPerPeriod = 10
+                    XParams.XfeedChangeWeight = 0.05
+                    // kill gradiant
+                    killGradiuantParms.Enabled = false
+                    killGradiuantParms.topKillValue = 0.08
+                    killGradiuantParms.bottomKillValue = 0.04
+                    // diffusion
+                    diffusionParams.diffusionPeriod = 100.0
+                    diffusionParams.diffusionState = 1.0
+                    diffusionParams.diffusionWeight = 0.15
                 break;
             }
             DiffusionA.refresh()
@@ -537,6 +606,7 @@
             break;
         }
         console.log("DONE:Setting Intital State")
+        time = 0
     }
 
     function makeBuffer() {
