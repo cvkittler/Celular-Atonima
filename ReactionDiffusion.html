@@ -30,10 +30,14 @@
     uniform float feed ;
     uniform float XPixelPerPeriod ;
     uniform float XfeedWeight ;
+    uniform bool Xenabled;
     uniform float topKillValue ;
     uniform float bottomKillValue ;
     uniform bool toggleKillGradiant;
-    
+    uniform float diffusionPeriod;
+    uniform float diffusionState;
+    uniform float diffusionWeight;
+
     // simulation texture state, swapped each frame
     uniform sampler2D state;
 
@@ -67,20 +71,31 @@
         float _k = kill;
         float XpixPerPeriod = XPixelPerPeriod;
         float XfeedWeight = XfeedWeight;
-
+        bool doXEffect = Xenabled;
+        float diffusionBPeriod = diffusionPeriod;
         //wrong name but dont want to change it
         float top_k = topKillValue;
         float bottom_k = bottomKillValue; //0,0 is bottom left
         bool killGradiant = toggleKillGradiant;
-        
-        _f = (cos((gl_FragCoord.x - gl_FragCoord.x/2.) / (XpixPerPeriod * 6.28)) * XfeedWeight) ;
+        float diffBState = diffusionState;
+        float diffWeight = diffusionWeight;
+
+        if ( doXEffect){
+            _f += (cos((gl_FragCoord.x - gl_FragCoord.x/2.) / (XpixPerPeriod * 6.28)) * XfeedWeight) ;
+        }
         float f = clamp(_f, 0.0, 1.0);
 
         if(killGradiant){
             _k = mix(bottom_k, top_k, (gl_FragCoord.y / res.y));
         }
         float k = clamp(_k, 0.0, 1.0);
-        
+
+        if (diffBState == 2.){
+            dB += cos(time/diffusionBPeriod) * diffWeight;
+        } else if(diffBState == 1.){
+            dB += sin(time/diffusionBPeriod) * diffWeight;
+        }
+        dB = clamp(dB, 0.0, 1.0);
 
         vec2 lpVal = laPlace();
         vec2 OG_val = get(0,0);
@@ -142,26 +157,89 @@
                 {title: 'Fun'}
             ],
         });
-        
+
+        //FOLDERS
+        const folderX = paneTabs.pages[2].addFolder({
+            title: 'X Effexts',
+        });
+        const folderKillGradiant = paneTabs.pages[2].addFolder({
+            title: 'Kill Gradiant',
+        });
+        const folderDiffusion = paneTabs.pages[2].addFolder({
+            title: 'Diffusion B vs Time'
+        });
 
         // paramiters for the reaction diffusion simulation
         const ConstantsParams = {
-            DiffusionA: 0.99,
-            DiffusionB: 0.28,
-            feed: 0.075,
-            kill: 0.062,
+            DiffusionA: 0.71,
+            DiffusionB: 0.14,
+            feed: 0.055,
+            kill: 0.066,
+        };
+        // paramiters for the initial seeding state of the simulation
+        const StartingParams = {
+            RadiusOrWidth: 100,
+            startingState: 0
+        };
+        // X distortion effect params
+        const XParams = {
+            XPixPerPeriod: 10,
+            XfeedChangeWeight: 0.1,
+            Xenabled: false
+        };
+        // kill gradiant paramaters
+        const killGradiuantParms = {
+            Enabled: false,
+            topKillValue: 0.124,
+            bottomKillValue: 0.000
+        };
+        // Diffusion B vs time params
+        const diffusionParams = {
+            diffusionState: 0.,
+            diffusionPeriod: 100.,
+            diffusionWeight: 0.1
         };
 
+        // default parameters input
         const DiffusionA =  paneTabs.pages[0].addInput(ConstantsParams, 'DiffusionA', { label: 'Diffusion A',min:0.0, max:1.0});
         const DiffusionB =  paneTabs.pages[0].addInput(ConstantsParams, 'DiffusionB', { label: 'Diffusion B',min:0.0, max:1.0});
         const feed =  paneTabs.pages[0].addInput(ConstantsParams, 'feed', { label: 'Feed',min:0.0, max:.10});
         const kill =  paneTabs.pages[0].addInput(ConstantsParams, 'kill', { label: 'Kill',min:0.0, max:.10});
-
+        // starting conditions input 
+        const Radius =  paneTabs.pages[1].addInput(StartingParams, 'RadiusOrWidth', {min:0, max:1000, step:1, label: 'Radius or Width',});
+        const StartStateList =  paneTabs.pages[1].addInput(StartingParams, 'startingState', {label: 'Starting State',options: {Circle: 0, BarVirtical: 1, BarHorizontal: 2,}});
+        // x distortion inputs
+        const Xenabled =  folderX.addInput(XParams, 'Xenabled', {label: 'Enabled'});
+        const PixelPerPeriodX =  folderX.addInput(XParams, 'XPixPerPeriod', {label: 'Pixel per X Period', min:1.0, max:50., step:1.0});
+        const feedWeightX =  folderX.addInput(XParams, 'XfeedChangeWeight', {label: 'Feed Distortion Weight', min:0.0, max:1.});
+        // kill gradiant inputs
+        const toggleKillGradiant = folderKillGradiant.addInput(killGradiuantParms, 'Enabled');
+        const topKillValue =  folderKillGradiant.addInput(killGradiuantParms, 'topKillValue', {label: 'Top Value', min:0.0, max:1.0});
+        const bottomKillValue =  folderKillGradiant.addInput(killGradiuantParms, 'bottomKillValue', {label: 'Bottom Value', min:0.0, max:1.0});
+        // difusioin b vs time inputs
+        const diffusionPeriod = folderDiffusion.addInput(diffusionParams, 'diffusionPeriod', {label: 'Time Period', min:1.0, max:1000.0, step:1.0});
+        const diffusionState = folderDiffusion.addInput(diffusionParams, 'diffusionState', {label: 'Disstortion Effect',options: {Disabled: 0., Sin: 1., Cos: 2.,},});
+        const diffusionWeight = folderDiffusion.addInput(diffusionParams, 'diffusionWeight', {label: 'Weight', min:.0, max:1.0});
+        
+        // prime the uniforms 
         gl.useProgram(simulationProgram);
+        //default paramaters
         gl.uniform1f(gl.getUniformLocation(simulationProgram, "DiffusionA"), ConstantsParams.DiffusionA);
         gl.uniform1f(gl.getUniformLocation(simulationProgram, "DiffusionB"), ConstantsParams.DiffusionB);
         gl.uniform1f(gl.getUniformLocation(simulationProgram, "feed"), ConstantsParams.feed);
         gl.uniform1f(gl.getUniformLocation(simulationProgram, "kill"), ConstantsParams.kill);
+        //x distortion uniforms
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "XPixelPerPeriod"), XParams.XPixPerPeriod);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "XfeedWeight"), XParams.XfeedChangeWeight);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "Xenabled"), XParams.Xenabled);
+        //kill gradiants uniforms
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "toggleKillGradiant"), killGradiuantParms.Enabled);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "topKillValue"), killGradiuantParms.topKillValue);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "bottomKillValue"), killGradiuantParms.bottomKillValue);
+        // diffusion b vs time uniforms
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "diffusionPeriod"), diffusionParams.diffusionPeriod);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "diffusionState"), diffusionParams.diffusionState);
+        gl.uniform1f(gl.getUniformLocation(simulationProgram, "diffusionWeight"), diffusionParams.diffusionWeight);
 
         // reaction diffusion paramiters update functions
         DiffusionA.on("change", (ev)=>{
@@ -184,44 +262,7 @@
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "kill"), ev.value);
             console.log("kill:", ev.value);
         })
-
-        // paramiters for the initial seeding state of the simulation
-        const StartingParams = {
-            RadiusOrWidth: 100,
-            startingState: 2
-        };
-
-        const Radius =  paneTabs.pages[1].addInput(StartingParams, 'RadiusOrWidth', {min:0, max:1000, step:1, label: 'Radius or Width',});
-        const StartStateList =  paneTabs.pages[1].addInput(StartingParams, 'startingState', {options: {Circle: 0, BarVirtical: 1, BarHorizontal: 2,}, label: 'Starting State',});
-
-        // make a reset button
-        const btn = pane.addButton({
-            title: 'Restart WARN: Laggy'
-        });
-
-        btn.on('click', () => {
-            setInitialState(StartingParams.RadiusOrWidth, StartingParams.startingState)
-        });
-
-        //X controls
-        // paramiters for the X controls feed distortion
-
-        const XParams = {
-            XPixPerPeriod: 10,
-            XfeedChangeWeight: 0.1
-        };
-
-        const folderX = paneTabs.pages[2].addFolder({
-            title: 'X Effexts',
-        });
-        const PixelPerPeriodX =  folderX.addInput(XParams, 'XPixPerPeriod', {label: 'Pixel per X Period', min:1.0, max:50., step:1.0});
-        const feedWeightX =  folderX.addInput(XParams, 'XfeedChangeWeight', {label: 'Feed Distortion Weight', min:0.0, max:1.});
-
-        // initilize the uniforms
-        gl.useProgram(simulationProgram);
-        gl.uniform1f(gl.getUniformLocation(simulationProgram, "XPixelPerPeriod"), XParams.XPixPerPeriod);
-        gl.uniform1f(gl.getUniformLocation(simulationProgram, "XfeedWeight"), XParams.XfeedChangeWeight);
-
+        // x distortion paramiters update functions
         PixelPerPeriodX.on("change", (ev)=>{
             gl.useProgram(simulationProgram);
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "XPixelPerPeriod"), ev.value);
@@ -232,28 +273,12 @@
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "XfeedWeight"), ev.value);
             console.log("feedWeight:", ev.value);
         })
-
-        const killGradiuantParms = {
-            Enabled: false,
-            topKillValue: 0.062,
-            bottomKillValue: 0.062
-        };
-
-        const folderKillGradiant = paneTabs.pages[2].addFolder({
-            title: 'Kill Gradiant',
-        });
-
-        const toggleKillGradiant = folderKillGradiant.addInput(killGradiuantParms, 'Enabled');
-        const topKillValue =  folderKillGradiant.addInput(killGradiuantParms, 'topKillValue', {label: 'Top Value', min:0.0, max:1.0});
-        const bottomKillValue =  folderKillGradiant.addInput(killGradiuantParms, 'bottomKillValue', {label: 'Bottom Value', min:0.0, max:1.0});
-
-        // initilize the uniforms
-        gl.useProgram(simulationProgram);
-        gl.uniform1f(gl.getUniformLocation(simulationProgram, "toggleKillGradiant"), killGradiuantParms.Enabled);
-        gl.uniform1f(gl.getUniformLocation(simulationProgram, "topKillValue"), killGradiuantParms.topKillValue);
-        gl.uniform1f(gl.getUniformLocation(simulationProgram, "bottomKillValue"), killGradiuantParms.bottomKillValue);
-
-        //uniform updating functions
+        Xenabled.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "Xenabled"), ev.value);
+            console.log("Xenabled:", ev.value);
+        })
+        // kill gradiant
         toggleKillGradiant.on("change", (ev)=>{
             gl.useProgram(simulationProgram);
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "toggleKillGradiant"), ev.value);
@@ -269,8 +294,186 @@
             gl.uniform1f(gl.getUniformLocation(simulationProgram, "bottomKillValue"), ev.value);
             console.log("bottomKillValue:", ev.value);
         })
+        // diffussin B vs time 
+        diffusionPeriod.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "diffusionPeriod"), ev.value);
+            console.log("diffusionPeriod:", ev.value);
+        })
+        diffusionState.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "diffusionState"), ev.value);
+            console.log("diffusionState:", ev.value);
+        })
+        diffusionWeight.on("change", (ev)=>{
+            gl.useProgram(simulationProgram);
+            gl.uniform1f(gl.getUniformLocation(simulationProgram, "diffusionWeight"), ev.value);
+            console.log("diffusionWeight:", ev.value);
+        })
+        
+        //GLOBAL INPUTS
+        // reset button
+        const btn = pane.addButton({
+            title: 'Restart WARN: Laggy'
+        });
+
+        btn.on('click', () => {
+            setInitialState(StartingParams.RadiusOrWidth, StartingParams.startingState)
+        });
+
+        // make a persets button
+        const presetParams = {
+            persetValue: 0.
+        };
+        const Presets = pane.addInput(
+            presetParams,
+            "persetValue",
+            {
+            label: 'Preset', 
+            options:    {default:       0.,
+                        livingPillars:  1., 
+                        ShockedEyes:    2., 
+                        MoldyTrees:     3., 
+                        StopAndStart:   4.,}
+            }
+        );
+            
+
+        Presets.on('change', (ev) => {
+            switch(ev.value){
+                case 0.0:
+                    // seeding params
+                    StartingParams.RadiusOrWidth = 100
+                    StartingParams.startingState = 2
+                    //base params
+                    ConstantsParams.DiffusionA = 0.99
+                    ConstantsParams.DiffusionB = 0.28
+                    ConstantsParams.feed = 0.075
+                    ConstantsParams.kill = 0.062
+                    // x feed params
+                    XParams.Xenabled = false
+                    XParams.XPixPerPeriod = 10
+                    XParams.XfeedChangeWeight = 0.1
+                    // kill gradiant
+                    killGradiuantParms.Enabled = false
+                    killGradiuantParms.topKillValue = 0.124
+                    killGradiuantParms.bottomKillValue = 0.0
+                    // diffusion
+                    diffusionParams.diffusionPeriod = 100.0
+                    diffusionParams.diffusionState = 0.0
+                    diffusionParams.diffusionWeight = 0.1
+                break;
+                case 1.0:
+                    // seeding params
+                    StartingParams.RadiusOrWidth = 100
+                    StartingParams.startingState = 2
+                    //base params
+                    ConstantsParams.DiffusionA = 0.99
+                    ConstantsParams.DiffusionB = 0.10
+                    ConstantsParams.feed = 0.075
+                    ConstantsParams.kill = 0.062
+                    // x feed params
+                    XParams.Xenabled = true
+                    XParams.XPixPerPeriod = 10
+                    XParams.XfeedChangeWeight = 0.1
+                    // kill gradiant
+                    killGradiuantParms.Enabled = false
+                    killGradiuantParms.topKillValue = 0.124
+                    killGradiuantParms.bottomKillValue = 0.0
+                    // diffusion
+                    diffusionParams.diffusionPeriod = 100.0
+                    diffusionParams.diffusionState = 1.0
+                    diffusionParams.diffusionWeight = 0.2
+                break;
+                case 2.0:
+                    // seeding params
+                    StartingParams.RadiusOrWidth = 100
+                    StartingParams.startingState = 2
+                    //base params
+                    ConstantsParams.DiffusionA = 0.99
+                    ConstantsParams.DiffusionB = 0.75
+                    ConstantsParams.feed = 0.092
+                    ConstantsParams.kill = 0.034
+                    // x feed params
+                    XParams.Xenabled = true
+                    XParams.XPixPerPeriod = 10
+                    XParams.XfeedChangeWeight = 0.1
+                    // kill gradiant
+                    killGradiuantParms.Enabled = false
+                    killGradiuantParms.topKillValue = 0.124
+                    killGradiuantParms.bottomKillValue = 0.0
+                    // diffusion
+                    diffusionParams.diffusionPeriod = 100.0
+                    diffusionParams.diffusionState = 1.0
+                    diffusionParams.diffusionWeight = 0.2
+                break;
+                case 3.0:
+                    // seeding params
+                    StartingParams.RadiusOrWidth = 100
+                    StartingParams.startingState = 1
+                    //base params
+                    ConstantsParams.DiffusionA = 0.74
+                    ConstantsParams.DiffusionB = 0.13
+                    ConstantsParams.feed = 0.068
+                    ConstantsParams.kill = 0.0
+                    // x feed params
+                    XParams.Xenabled = false
+                    XParams.XPixPerPeriod = 10
+                    XParams.XfeedChangeWeight = 0.1
+                    // kill gradiant
+                    killGradiuantParms.Enabled = true
+                    killGradiuantParms.topKillValue = 0.124
+                    killGradiuantParms.bottomKillValue = 0.05
+                    // diffusion v time
+                    diffusionParams.diffusionPeriod = 100.0
+                    diffusionParams.diffusionState = 0.0
+                    diffusionParams.diffusionWeight = 0.2
+                break;
+                case 4.0: //stop and go
+                    // seeding params
+                    StartingParams.RadiusOrWidth = 10
+                    StartingParams.startingState = 1
+                    //base params
+                    ConstantsParams.DiffusionA = 0.99
+                    ConstantsParams.DiffusionB = 0.1
+                    ConstantsParams.feed = 0.075
+                    ConstantsParams.kill = 0.062
+                    // x feed params
+                    XParams.Xenabled = true
+                    XParams.XPixPerPeriod = 10
+                    XParams.XfeedChangeWeight = 0.01
+                    // kill gradiant
+                    killGradiuantParms.Enabled = true
+                    killGradiuantParms.topKillValue = 0.1
+                    killGradiuantParms.bottomKillValue = 0.06
+                    // diffusion v time
+                    diffusionParams.diffusionPeriod = 20.0
+                    diffusionParams.diffusionState = 1.0
+                    diffusionParams.diffusionWeight = 0.2
+                break;
+            }
+            DiffusionA.refresh()
+            DiffusionB.refresh()
+            feed.refresh()
+            kill.refresh()
+            Xenabled.refresh()
+            PixelPerPeriodX.refresh()
+            feedWeightX.refresh()
+            toggleKillGradiant.refresh()
+            topKillValue.refresh()
+            bottomKillValue.refresh()
+            diffusionPeriod.refresh()
+            diffusionWeight.refresh()
+            diffusionState.refresh()
+            Radius.refresh()
+            StartStateList.refresh()
+
+            setInitialState(StartingParams.RadiusOrWidth, StartingParams.startingState)
+        });
+
         setInitialState(StartingParams.RadiusOrWidth, StartingParams.startingState)
         render()
+        
     }//on load end
     
     function poke( x, y, valueA, valueB, texture ) {   
